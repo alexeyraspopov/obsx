@@ -9,13 +9,13 @@ export function apply(root, context) {
 	this applicable to `data-when` directive's children. Scheduling in watchers must
 	use shared queue that yields to browser at 60Hz. */
 	let walker = treeWalker(root);
-	let keys = Object.keys(context);
+	let keys = allKeys(context);
 	for (let node = walker.root; node instanceof HTMLElement; node = walker.nextNode()) {
 		let ephemeral = node instanceof HTMLTemplateElement;
 
 		if (Object.hasOwn(node.dataset, "when")) {
 			let expression = node.dataset.when;
-			let gate = compile(expression, keys, context);
+			let gate = compile(expression, context, keys);
 			// TODO schedule compilation
 			continue;
 		}
@@ -53,11 +53,37 @@ function acceptNode(node) {
 }
 
 /**
+ * 1. should allow to continue using `this`
+ * 2. allows context to have accessible prototype
+ *
  * @param {string} expression
- * @param {Iterable<string>} keys
- * @param {Record<string, any>} context
+ * @param {Record<string, unknown>} context
+ * @param {Array<string>} keys
+ * @param {Array<string>} [extras]
+ * @returns {(...extras: Array<unknown>) => unknown}
  */
-function compile(expression, keys, context) {
-	let fn = new Function(...keys, `return (${expression});`);
-	return (...extras) => fn(...Object.values(context), ...extras);
+function compile(expression, context, keys, extras) {
+	// XXX do I need to bind methods?
+	let fn = new Function(`
+  	${keys.reduce((acc, key) => acc + `const ${key} = this.${key};\n`, "")}
+  	return (${extras != null ? extras.join(", ") : ""}) => (${expression});
+  `);
+	return fn.call(context);
+}
+
+/**
+ * Collect object keys including prototype chain up to Object.prototype.
+ *
+ * @param {object} target
+ * @returns {Array<string>}
+ */
+function allKeys(target) {
+	let identifier = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+	let keys = new Set();
+	while (target != null && target !== Object.prototype) {
+		let ownKeys = Object.getOwnPropertyNames(target);
+		for (let key of ownKeys) if (identifier.test(key)) keys.add(key);
+		target = Object.getPrototypeOf(target);
+	}
+	return Array.from(keys);
 }
